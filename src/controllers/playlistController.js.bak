@@ -1,0 +1,469 @@
+const supabase = require('../supabase');
+
+// ═══ Blindagem UUID (mesma lógica do server.js) ═══
+function ehUuid(valor) {
+  return typeof valor === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(valor);
+}
+
+// ═══ Roles de administrador (Dashboard Produção) ═══
+const ADMIN_ROLES = ['ADMIN', 'ZEEP_ADMIN', 'SUPER_ADMIN', 'MASTER'];
+// ═══ Roles de administrador de PLATAFORMA (visão global) ═══
+const PLATFORM_ADMIN_ROLES = ['MASTER', 'ZEEP_ADMIN', 'SUPER_ADMIN'];
+
+function ehAdmin(auth) { return ADMIN_ROLES.includes(auth.role); }
+function ehPlataforma(auth) { return PLATFORM_ADMIN_ROLES.includes(auth.role); }
+
+// ═══ Extrai o token do header (sem regex, evita quebra na colagem) ═══
+function extrairToken(req) {
+  const header = String((req.headers && req.headers.authorization) || '');
+  if (header.slice(0, 7).toLowerCase() === 'bearer ') return header.slice(7).trim();
+  return header.trim();
+}
+
+// ═══ Valida o token e devolve usuário/empresa/unidade/role ═══
+async function autenticar(req) {
+  const token = extrairToken(req);
+  if (!token) return { erro: 401, mensagem: 'Token ausente.' };
+
+  const { data: userData, error: userError } = await supabase.auth.getUser(token);
+  if (userError || !userData.user) return { erro: 401, mensagem: 'Sessão inválida.' };
+
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select('company_id, unit_id, role')
+    .eq('id', userData.user.id)
+    .maybeSingle();
+  if (profileError) return { erro: 500, mensagem: 'Erro ao buscar perfil.' };
+
+  const isAdmin = profile && ADMIN_ROLES.includes(profile.role);
+  if (!profile || (!isAdmin && !ehUuid(profile.company_id))) {
+    return { erro: 403, mensagem: 'Usuário sem empresa vinculada.' };
+  }
+
+  return {
+    userId: userData.user.id,
+    role: profile.role || 'MANAGER',
+    companyId: ehUuid(profile.company_id) ? profile.company_id : null,
+    unitId: ehUuid(profile.unit_id) ? profile.unit_id : null
+  };
+}
+
+const TIPOS_VALIDOS = ['CURADORIA', 'BIBLIOTECA'];
+
+// Admin pode operar em qualquer empresa via ?company_id / body.company_id
+function resolverEmpresa(auth, valorInformado) {
+  if (ehAdmin(auth) && valorInformado && ehUuid(valorInformado)) return valorInformado;
+  return auth.companyId;
+}
+
+// ═══ Limpa a lista de faixas: só UUIDs válidos, sem repetidos, mantendo a ordem ═══
+function faixasValidas(track_ids) {
+  const vistos = new Set();
+  const lista = [];
+  for (const tid of (track_ids || [])) {
+    if (!ehUuid(tid)) return { erro: 'ID de faixa inválido: ' + tid };
+    if (vistos.has(tid)) continue;
+    vistos.add(tid);
+    lista.push(tid);
+  }
+  return { lista };
+}
+
+// GET /api/playlists — admin de plataforma vê tudo; ADMIN de empresa vê só a própria
+async function listPlaylists(req, res) {
+  try {
+    const auth = await autenticar(req);
+    if (auth.erro) return res.status(auth.erro).json({ success: false, message: auth.mensagem });
+
+    const tipo = req.query.tipo || req.query.type;
+    const isPlataforma = ehPlataforma(auth);
+    const companyId = resolverEmpresa(auth, req.query.company_id);
+    const pediuTudo = isPlataforma && String(req.query.company_id || '').toUpperCase() === 'ALL';
+
+    let query = supabase.from('playlists').select('*');
+
+    if (tipo === 'BIBLIOTECA') {
+      query = query.is('company_id', null);
+    } else if (!(pediuTudo || (isPlataforma && !req.query.company_id))) {
+      if (companyId) query = query.eq('company_id', companyId);
+    }
+
+    if (tipo) query = query.eq('type', tipo);
+
+    const { data, error } = await query.order('created_at', { ascending: false });
+    if (error) throw error;
+
+    if (tipo === 'BIBLIOTECA' && !ehAdmin(auth)) {
+      let plan = 'Standard';
+      if (auth.companyId) {
+        const { data: company } = await supabase
+          .from('companies').select('plan')
+          .eq('id', auth.companyId).maybeSingle();
+        if (company && company.plan) plan = company.plan;
+      }
+      const liberados = (plan === 'Standard')
+        ? ['STANDARD']
+        : ['STANDARD', 'BUSINESS'];
+      res.json({
+        success: true,
+        playlists: (data || []).filter(p => liberados.includes(p.min_plan || 'BUSINESS'))
+      });
+      return;
+    }
+
+    res.json({ success: true, playlists: data });
+  } catch (err) {
+    console.error('[PLAYLISTS] Erro ao listar:', err.message);
+    res.status(500).json({ success: false, message: 'Erro interno ao listar playlists.' });
+  }
+}
+
+if (tipo) query = query.eq('type', tipo);
+
+    const { data, error } = await query.order('created_at', { ascending: false });
+    if (error) throw error;
+
+    if (tipo === 'BIBLIOTECA' && !ehAdmin(auth)) {
+      let plan = 'Standard';
+      if (auth.companyId) {
+        const { data: company } = await supabase
+          .from('companies').select('plan')
+          .eq('id', auth.companyId).maybeSingle();
+        if (company && company.plan) plan = company.plan;
+      }
+      const liberados = (plan === 'Standard')
+        ? ['STANDARD']
+        : ['STANDARD', 'BUSINESS'];
+      res.json({
+        success: true,
+        playlists: (data || []).filter(p => liberados.includes(p.min_plan || 'BUSINESS'))
+      });
+      return;
+    }
+
+    res.json({ success: true, playlists: data });
+  } catch (err) {
+    console.error('[PLAYLISTS] Erro ao listar:', err.message);
+    res.status(500).json({ success: false, message: 'Erro interno ao listar playlists.' });
+  }
+}
+
+// POST /api/playlists — cria playlist (com opção de já adicionar músicas)
+async function createPlaylist(req, res) {
+  try {
+    const auth = await autenticar(req);
+    if (auth.erro) return res.status(auth.erro).json({ success: false, message: auth.mensagem });
+
+    const { name, type, description, company_id, track_ids, plano } = req.body || {};
+    if (!name || !type) {
+      return res.status(400).json({ success: false, message: 'Informe name e type (CURADORIA ou BIBLIOTECA).' });
+    }
+    if (!TIPOS_VALIDOS.includes(type)) {
+      return res.status(400).json({ success: false, message: 'type deve ser CURADORIA ou BIBLIOTECA.' });
+    }
+
+    // ★ Valida as faixas ANTES de criar (evita playlist órfã se o id for inválido)
+    const faixas = faixasValidas(track_ids);
+    if (faixas.erro) return res.status(400).json({ success: false, message: faixas.erro });
+    const ids = faixas.lista;
+
+    const ehBiblioteca = type === 'BIBLIOTECA';
+    const companyId = ehBiblioteca ? null : resolverEmpresa(auth, company_id);
+
+    // 1) Cria a playlist
+    const { data, error } = await supabase
+      .from('playlists')
+      .insert({
+        company_id: companyId,
+        name,
+        type,
+        description: description || null,
+        plano: plano || null,
+        active: true
+      })
+      .select()
+      .single();
+    if (error) throw error;
+
+    // 2) Se vieram músicas marcadas, vincula na playlist_tracks
+    if (ids.length) {
+      const linhas = ids.map(function (tid, i) {
+        return { playlist_id: data.id, track_id: tid, position: i };
+      });
+      const { error: errTracks } = await supabase.from('playlist_tracks').insert(linhas);
+      if (errTracks) throw errTracks;
+    }
+
+    res.status(201).json({ success: true, playlist: data, faixas_vinculadas: ids.length });
+  } catch (err) {
+    console.error('[PLAYLISTS] Erro ao criar:', err.message);
+    res.status(500).json({ success: false, message: 'Erro interno ao criar playlist.' });
+  }
+}
+
+// PUT /api/playlists/:id — edita (só da própria empresa, salvo admin)
+async function updatePlaylist(req, res) {
+  try {
+    const auth = await autenticar(req);
+    if (auth.erro) return res.status(auth.erro).json({ success: false, message: auth.mensagem });
+
+    const { id } = req.params;
+    if (!ehUuid(id)) return res.status(400).json({ success: false, message: 'ID inválido.' });
+
+    const { name, type, description, active, plano, start_time, end_time } = req.body || {};
+    const updates = {};
+    if (name !== undefined) updates.name = name;
+    if (type !== undefined) {
+      if (!TIPOS_VALIDOS.includes(type)) {
+        return res.status(400).json({ success: false, message: 'type deve ser CURADORIA ou BIBLIOTECA.' });
+      }
+      updates.type = type;
+    }
+    if (description !== undefined) updates.description = description;
+    if (active !== undefined) {
+      updates.active = active === true || active === 'true';
+    }
+    if (plano !== undefined) updates.plano = plano;
+    if (start_time !== undefined) updates.start_time = (start_time === '' ? null : start_time);
+    if (end_time !== undefined) updates.end_time = (end_time === '' ? null : end_time);
+    updates.updated_at = new Date().toISOString();
+
+    let query = supabase.from('playlists').update(updates).eq('id', id);
+    if (!ehAdmin(auth)) query = query.eq('company_id', auth.companyId);
+    const { data, error } = await query.select().maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ success: false, message: 'Playlist não encontrada.' });
+
+    res.json({ success: true, playlist: data });
+  } catch (err) {
+    console.error('[PLAYLISTS] Erro ao editar:', err.message);
+    res.status(500).json({ success: false, message: 'Erro interno ao editar playlist.' });
+  }
+}
+
+// DELETE /api/playlists/:id — exclui (remove vínculos antes, evita erro de FK)
+async function deletePlaylist(req, res) {
+  try {
+    const auth = await autenticar(req);
+    if (auth.erro) return res.status(auth.erro).json({ success: false, message: auth.mensagem });
+
+    const { id } = req.params;
+    if (!ehUuid(id)) return res.status(400).json({ success: false, message: 'ID inválido.' });
+
+    let query = supabase.from('playlists').select('id').eq('id', id);
+    if (!ehAdmin(auth)) query = query.eq('company_id', auth.companyId);
+    const { data: existe } = await query.maybeSingle();
+    if (!existe) return res.status(404).json({ success: false, message: 'Playlist não encontrada.' });
+
+    const { error: errVinc } = await supabase
+      .from('playlist_tracks')
+      .delete()
+      .eq('playlist_id', id);
+    if (errVinc) throw errVinc;
+
+    const { data, error } = await supabase.from('playlists').delete().eq('id', id).select().maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ success: false, message: 'Playlist não encontrada.' });
+
+    res.json({ success: true, message: 'Playlist excluída.' });
+  } catch (err) {
+    console.error('[PLAYLISTS] Erro ao excluir:', err.message);
+    res.status(500).json({ success: false, message: 'Erro interno ao excluir playlist.' });
+  }
+}
+
+// GET /api/playlists/:playlistId/tracks — faixas da playlist (2 passos, sem depender de FK)
+async function listTracks(req, res) {
+  try {
+    const auth = await autenticar(req);
+    if (auth.erro) return res.status(auth.erro).json({ success: false, message: auth.mensagem });
+
+    const { playlistId } = req.params;
+    if (!ehUuid(playlistId)) return res.status(400).json({ success: false, message: 'ID inválido.' });
+
+    let query = supabase.from('playlists').select('id').eq('id', playlistId);
+    if (!ehAdmin(auth)) query = query.eq('company_id', auth.companyId);
+    const { data: playlist } = await query.maybeSingle();
+    if (!playlist) return res.status(404).json({ success: false, message: 'Playlist não encontrada.' });
+
+    const { data: vincs, error: errVincs } = await supabase
+      .from('playlist_tracks')
+      .select('track_id, position')
+      .eq('playlist_id', playlistId)
+      .order('position', { ascending: true });
+    if (errVincs) throw errVincs;
+
+    let tracks = [];
+    if (vincs && vincs.length) {
+      const ids = vincs.map(function (v) { return v.track_id; });
+      const { data: mus, error: errMus } = await supabase
+        .from('tracks')
+        .select('*')
+        .in('id', ids);
+      if (errMus) throw errMus;
+
+      const porId = {};
+      (mus || []).forEach(function (m) { porId[m.id] = m; });
+      tracks = vincs.map(function (v) { return porId[v.track_id] || null; }).filter(Boolean);
+    }
+
+    res.json({ success: true, tracks });
+  } catch (err) {
+    console.error('[PLAYLISTS] Erro ao listar faixas:', err.message);
+    res.status(500).json({ success: false, message: 'Erro interno ao listar faixas.' });
+  }
+}
+
+// PUT /api/playlists/:playlistId/tracks — SUBSTITUI a lista inteira (usado pelo REMOVER)
+async function setPlaylistTracks(req, res) {
+  try {
+    const auth = await autenticar(req);
+    if (auth.erro) return res.status(auth.erro).json({ success: false, message: auth.mensagem });
+
+    const { playlistId } = req.params;
+    if (!ehUuid(playlistId)) return res.status(400).json({ success: false, message: 'ID inválido.' });
+
+    let query = supabase.from('playlists').select('id').eq('id', playlistId);
+    if (!ehAdmin(auth)) query = query.eq('company_id', auth.companyId);
+    const { data: playlist } = await query.maybeSingle();
+    if (!playlist) return res.status(404).json({ success: false, message: 'Playlist não encontrada.' });
+
+    const { track_ids } = req.body || {};
+    if (!Array.isArray(track_ids)) {
+      return res.status(400).json({ success: false, message: 'Envie track_ids (array de UUIDs das músicas).' });
+    }
+
+    const faixas = faixasValidas(track_ids);
+    if (faixas.erro) return res.status(400).json({ success: false, message: faixas.erro });
+    const ids = faixas.lista;
+
+    // 1) Apaga TODAS as faixas atuais (lista vazia = esvaziar a playlist — comportamento correto)
+    const { error: errDel } = await supabase.from('playlist_tracks').delete().eq('playlist_id', playlistId);
+    if (errDel) throw errDel;
+
+    // 2) Grava a lista nova, sem duplicatas e na ordem enviada
+    if (ids.length) {
+      const linhas = ids.map(function (tid, i) {
+        return { playlist_id: playlistId, track_id: tid, position: i };
+      });
+      const { error: errIns } = await supabase.from('playlist_tracks').insert(linhas);
+      if (errIns) throw errIns;
+    }
+
+    res.json({ success: true, faixas_vinculadas: ids.length });
+  } catch (err) {
+    console.error('[PLAYLISTS] Erro ao salvar faixas:', err.message);
+    res.status(500).json({ success: false, message: 'Erro interno ao salvar faixas.' });
+  }
+}
+
+// POST /api/playlists/:playlistId/tracks — ADICIONA faixas ao final (usado pelo ADD)
+async function addTracksToPlaylist(req, res) {
+  try {
+    const auth = await autenticar(req);
+    if (auth.erro) return res.status(auth.erro).json({ success: false, message: auth.mensagem });
+
+    const { playlistId } = req.params;
+    if (!ehUuid(playlistId)) return res.status(400).json({ success: false, message: 'ID inválido.' });
+
+    let query = supabase.from('playlists').select('id').eq('id', playlistId);
+    if (!ehAdmin(auth)) query = query.eq('company_id', auth.companyId);
+    const { data: playlist } = await query.maybeSingle();
+    if (!playlist) return res.status(404).json({ success: false, message: 'Playlist não encontrada.' });
+
+    const { track_ids } = req.body || {};
+    if (!Array.isArray(track_ids)) {
+      return res.status(400).json({ success: false, message: 'Envie track_ids (array de UUIDs das músicas).' });
+    }
+
+    const faixas = faixasValidas(track_ids);
+    if (faixas.erro) return res.status(400).json({ success: false, message: faixas.erro });
+    const ids = faixas.lista;
+
+    // ★ Lista vazia = nada a fazer. NUNCA apagar a playlist aqui.
+    if (!ids.length) {
+      return res.json({ success: true, faixas_adicionadas: 0, ignoradas: 0 });
+    }
+
+    // ★ Lê o que JÁ existe para não tentar inserir duplicata (era a causa do 500)
+    const { data: atuais, error: errAtuais } = await supabase
+      .from('playlist_tracks')
+      .select('track_id, position')
+      .eq('playlist_id', playlistId);
+    if (errAtuais) throw errAtuais;
+
+    const jaExistem = new Set((atuais || []).map(function (r) { return r.track_id; }));
+    const novas = ids.filter(function (tid) { return !jaExistem.has(tid); });
+    const ignoradas = ids.length - novas.length;
+
+    if (!novas.length) {
+      return res.json({ success: true, faixas_adicionadas: 0, ignoradas });
+    }
+
+    // Adiciona ao FINAL da playlist
+    const posInicial = (atuais || []).reduce(function (max, r) {
+      return Math.max(max, r.position || 0);
+    }, -1) + 1;
+
+    const linhas = novas.map(function (tid, i) {
+      return { playlist_id: playlistId, track_id: tid, position: posInicial + i };
+    });
+
+    const { error: errIns } = await supabase.from('playlist_tracks').insert(linhas);
+    if (errIns) throw errIns;
+
+    res.status(201).json({ success: true, faixas_adicionadas: novas.length, ignoradas });
+  } catch (err) {
+    console.error('[PLAYLISTS] Erro ao adicionar faixas:', err.message);
+    res.status(500).json({ success: false, message: 'Erro interno ao adicionar faixas.' });
+  }
+}
+
+// DELETE /api/playlists/:playlistId/tracks — remove SOMENTE as faixas indicadas (atômico)
+async function removerFaixasPlaylist(req, res) {
+  try {
+    const auth = await autenticar(req);
+    if (auth.erro) return res.status(auth.erro).json({ success: false, message: auth.mensagem });
+
+    const { playlistId } = req.params;
+    if (!ehUuid(playlistId)) return res.status(400).json({ success: false, message: 'ID inválido.' });
+
+    let query = supabase.from('playlists').select('id').eq('id', playlistId);
+    if (!ehAdmin(auth)) query = query.eq('company_id', auth.companyId);
+    const { data: playlist } = await query.maybeSingle();
+    if (!playlist) return res.status(404).json({ success: false, message: 'Playlist não encontrada.' });
+
+    const { track_ids } = req.body || {};
+    if (!Array.isArray(track_ids) || !track_ids.length) {
+      return res.status(400).json({ success: false, message: 'Envie track_ids (array de UUIDs a remover).' });
+    }
+    for (const tid of track_ids) {
+      if (!ehUuid(tid)) return res.status(400).json({ success: false, message: 'ID de faixa inválido: ' + tid });
+    }
+
+    // ★ Apaga SOMENTE as faixas indicadas — não mexe nas outras
+    const { error: errDel } = await supabase
+      .from('playlist_tracks')
+      .delete()
+      .eq('playlist_id', playlistId)
+      .in('track_id', track_ids);
+    if (errDel) throw errDel;
+
+    res.json({ success: true, removidas: track_ids.length });
+  } catch (err) {
+    console.error('[PLAYLISTS] Erro ao remover faixas:', err.message);
+    res.status(500).json({ success: false, message: 'Erro interno ao remover faixas.' });
+  }
+}
+
+module.exports = {
+  listPlaylists,
+  createPlaylist,
+  updatePlaylist,
+  deletePlaylist,
+  listTracks,
+  setPlaylistTracks,
+  addTracksToPlaylist,
+  removerFaixasPlaylist
+};

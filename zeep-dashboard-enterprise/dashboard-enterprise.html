@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ZEEP | Enterprise Dashboard</title>
+<style>
+:root {
+--navy: #0A0E1A;
+--navy2: #0D1526;
+--petrol: #0E2233;
+--petrol2: #122840;
+--cyan: #3CBAD8;
+--cyan2: #2DA8C4;
+--cyan3: rgba(60,186,216,.18);
+--cyan4: rgba(60,186,216,.07);
+--text: #E8EDF5;
+--text2: #8FA3C0;
+--text3: #3E5470;
+--green: #2ECC71;
+--amber: #F39C12;
+--red: #E74C3C;
+--purple: #9B59B6;
+--orange: #E67E22;
+--border: rgba(60,186,216,.18);
+--border2: rgba(255,255,255,.06);
+--glass: rgba(255,255,255,.04);
+--glass2: rgba(255,255,255,.08);
+--glow: 0 0 28px rgba(60,186,216,.28);
+--font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; font-family: var(--font); }
+body {
+background: var(--navy);
+background-image: radial-gradient(ellipse 80% 60% at 50% 40%, rgba(60,186,216,0.08) 0%, transparent 70%), radial-gradient(ellipse 60% 50% at 30% 60%, rgba(60,186,216,0.04) 0%, transparent 60%);
+color: var(--text);
+display: flex;
+height: 100vh;
+overflow: hidden;
+}
+aside { width: 240px; background: var(--navy2); border-right: 1px solid var(--border2); display: flex; flex-direction: column; z-index: 10; }
+.logo-area { padding: 32px 24px; }
+.logo-area h1 { font-size: 22px; font-weight: 800; color: var(--cyan); letter-spacing: 1px; }
+.logo-area p { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 3px; margin-top: 4px; }
+.nav-label { font-size: 9px; letter-spacing: 2px; color: var(--text3); text-transform: uppercase; padding: 24px 24px 8px; }
+nav { flex: 1; overflow-y: auto; }
+.nav-item { padding: 10px 24px; font-size: 12px; color: var(--text2); cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 12px; border-left: 2px solid transparent; }
+.nav-item:hover { color: var(--text); background: var(--glass); }
+.nav-item.active { color: var(--cyan); background: var(--cyan4); border-left-color: var(--cyan); font-weight: 600; }
+.sidebar-footer { padding: 20px; border-top: 1px solid var(--border2); display: flex; align-items: center; gap: 12px; }
+.avatar { width: 32px; height: 32px; border-radius: 8px; background: linear-gradient(135deg, var(--cyan), var(--cyan2)); display: flex; align-items: center; justify-content: center; color: var(--navy); font-weight: 700; font-size: 12px; }
+main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+header { height: 70px; padding: 0 40px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border2); background: rgba(10,14,26,0.5); backdrop-filter: blur(10px); }
+.header-left h2 { font-size: 18px; font-weight: 700; color: var(--text); }
+.header-right { display: flex; gap: 12px; }
+.badge { padding: 4px 10px; border-radius: 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.badge-ent { background: var(--cyan4); color: var(--cyan); border: 1px solid var(--cyan3); }
+.badge-units { background: rgba(255,255,255,0.05); color: var(--text2); border: 1px solid var(--border2); }
+.badge-red { background: rgba(231,76,60,0.1); color: var(--red); border: 1px solid rgba(231,76,60,0.2); }
+.badge-amber { background: rgba(243,156,18,0.1); color: var(--amber); border: 1px solid rgba(243,156,18,0.2); }
+.badge-plan { background: rgba(46,204,113,0.1); color: var(--green); border: 1px solid rgba(46,204,113,0.2); }
+.content { flex: 1; padding: 40px; overflow-y: auto; }
+.module { display: none; animation: fadeIn 0.3s ease; }
+.module.active { display: block; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+.grid-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 32px; }
+.card-metric { padding: 20px; border-radius: 12px; background: var(--glass); border: 1px solid var(--border2); position: relative; overflow: hidden; transition: 0.3s; cursor: pointer; }
+.card-metric::before { content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 2px; }
+.card-metric.online::before { background: var(--green); }
+.card-metric.offline::before { background: var(--red); }
+.card-metric.playlists::before { background: var(--cyan); }
+.card-metric.alerts::before { background: var(--orange); }
+.card-metric p { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+.card-metric h3 { font-size: 24px; font-weight: 700; }
+.card-metric.online h3 { color: var(--green); }
+.card-metric.offline h3 { color: var(--red); }
+.card-metric.playlists h3 { color: var(--cyan); }
+.card-metric.alerts h3 { color: var(--orange); }
+.card-metric.online:hover { background: rgba(46,204,113,0.05); }
+.card-metric.offline:hover { background: rgba(231,76,60,0.05); }
+.card-metric.playlists:hover { background: rgba(60,186,216,0.05); }
+.card-metric.alerts:hover { background: rgba(230,126,34,0.05); }
+.card-icon { position: absolute; top: 15px; right: 15px; font-size: 20px; opacity: 0.2; }
+.section-title { font-size: 14px; font-weight: 700; color: var(--text2); margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
+.grid-units { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; margin-bottom: 32px; }
+.unit-card { background: var(--glass); border: 1px solid var(--border2); border-radius: 12px; padding: 20px; transition: 0.2s; }
+.unit-card:hover { border-color: var(--border); background: var(--glass2); }
+.unit-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+.unit-header h4 { font-size: 14px; font-weight: 700; color: var(--text); }
+.status-pill { font-size: 9px; font-weight: 800; text-transform: uppercase; padding: 2px 8px; border-radius: 4px; }
+.pill-online { background: rgba(46,204,113,0.1); color: var(--green); }
+.pill-offline { background: rgba(231,76,60,0.1); color: var(--red); }
+.unit-info { font-size: 12px; color: var(--text2); margin-bottom: 8px; }
+.unit-info strong { color: var(--cyan); }
+.unit-meta { display: flex; justify-content: space-between; font-size: 11px; color: var(--text3); margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border2); }
+.table-container { background: var(--glass); border-radius: 12px; border: 1px solid var(--border2); overflow: hidden; margin-bottom: 30px; }
+table { width: 100%; border-collapse: collapse; }
+th { padding: 16px 20px; text-align: left; font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; background: rgba(255,255,255,0.02); }
+td { padding: 14px 20px; font-size: 13px; color: var(--text2); border-bottom: 1px solid var(--border2); }
+.btn { padding: 8px 18px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; border: none; transition: 0.2s; display: inline-flex; align-items: center; gap: 8px; }
+.btn-primary { background: linear-gradient(135deg, var(--cyan), var(--cyan2)); color: var(--navy); box-shadow: var(--glow); }
+.btn-ghost { background: var(--glass2); color: var(--text2); border: 1px solid var(--border2); }
+.btn-ghost:hover { background: var(--glass); color: var(--text); }
+.btn-danger { background: rgba(231,76,60,0.1); color: var(--red); border: 1px solid rgba(231,76,60,0.2); }
+.btn-danger:hover { background: var(--red); color: #fff; }
+.btn-sm { padding: 4px 10px; font-size: 10px; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.sub-card { background: var(--glass); border: 1px solid var(--border2); border-radius: 12px; padding: 20px; }
+.sub-card h4 { font-size: 12px; color: var(--cyan); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 16px; }
+.timeline { position: relative; padding-left: 24px; }
+.timeline::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 1px; background: var(--border2); }
+.timeline-item { position: relative; margin-bottom: 20px; font-size: 12px; }
+.timeline-item::before { content: ""; position: absolute; left: -28px; top: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); }
+.timeline-date { font-size: 10px; color: var(--text3); margin-bottom: 2px; }
+.modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 100; align-items: center; justify-content: center; }
+.modal-content { background: var(--navy2); border: 1px solid var(--border); border-radius: 16px; width: 500px; max-height: 90vh; overflow-y: auto; padding: 32px; box-shadow: var(--glow); }
+.modal-content h3 { margin-bottom: 20px; color: var(--cyan); }
+input, textarea, select { width: 100%; background: var(--navy); border: 1px solid var(--border2); border-radius: 8px; padding: 10px 14px; color: var(--text); outline: none; font-size: 13px; margin-top: 8px; margin-bottom: 16px; }
+input:focus, select:focus, textarea:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px var(--cyan4); }
+label { display: block; font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+::-webkit-scrollbar { width: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--cyan3); border-radius: 2px; }
+</style>
+</head>
+<body>
+<aside>
+<div class="logo-area"><img src="logo-zeep.png" alt="ZEEP" style="height: 30px; width: auto; display: block;"><p>Dashboard Matriz</p></div>
+<nav>
+<p class="nav-label">Rede</p>
+<div class="nav-item active" onclick="nav('visao-geral', this)">Visão Geral</div>
+<div class="nav-item" onclick="nav('unidades', this)">Unidades</div>
+<div class="nav-item" onclick="nav('playlists', this)">Playlists</div>
+<p class="nav-label">Conteúdo</p>
+<div class="nav-item" onclick="nav('avisos', this)">Criar Avisos</div>
+<div class="nav-item" onclick="nav('historico', this)">Histórico</div>
+<p class="nav-label">Conta</p>
+<div class="nav-item" onclick="nav('config', this)">Configurações</div>
+</nav>
+<div class="sidebar-footer">
+<div class="avatar">RR</div>
+<div><p style="font-size:12px;font-weight:600;">Sua Loja</p><p style="font-size:10px;color:var(--text3);">Administrador</p></div>
+</div>
+</aside>
+<main>
+<header>
+<div class="header-left"><h2 id="page-title">Visão Geral</h2><span id="cliente-nome" style="font-size:13px;color:var(--text3);margin-left:10px;">- Sua Loja</span></div>
+<div class="header-right"><span class="badge badge-ent">Enterprise</span><span class="badge badge-units" id="badge-units">12 Unidades</span></div>
+</header>
+<div class="content">
+<section id="visao-geral" class="module active">
+<div class="grid-metrics">
+<div class="card-metric online" onclick="nav('unidades', document.querySelectorAll('.nav-item')[1])"><div class="card-icon">🟢</div><p>Unidades Online</p><h3 id="metric-online">11</h3></div>
+<div class="card-metric offline" onclick="nav('unidades', document.querySelectorAll('.nav-item')[1])"><div class="card-icon">🔴</div><p>Unidades Offline</p><h3 id="metric-offline">01</h3></div>
+<div class="card-metric playlists" onclick="nav('playlists', document.querySelectorAll('.nav-item')[2])"><div class="card-icon">🎵</div><p>Playlists Ativas</p><h3>04</h3></div>
+<div class="card-metric alerts" onclick="nav('avisos', document.querySelectorAll('.nav-item')[4])"><div class="card-icon">📢</div><p>Avisos no Ar</p><h3>02</h3></div>
+</div>
+<div class="section-title">Status da Rede em Tempo Real</div>
+<div class="grid-units" id="units-grid"></div>
+</section>
+<section id="unidades" class="module">
+<div class="section-title">Gestão de Unidades <button class="btn btn-primary btn-sm" onclick="openModal('modal-nova-unidade')">+ Nova Unidade</button></div>
+<div class="table-container">
+<table>
+<thead><tr><th>Unidade</th><th>Status</th><th>Player ID</th><th>Playlist Atual</th><th>Volume</th><th>Ações</th></tr></thead>
+<tbody id="units-table"></tbody>
+</table>
+</div>
+<p style="font-size:11px;color:var(--text3);margin-bottom:20px;">💡 Ao adicionar ou remover unidades, a Zeep será notificada automaticamente para ajustar seu contrato e faturamento.</p>
+</section>
+<section id="playlists" class="module">
+<div class="section-title">Biblioteca de Playlists</div>
+<div class="grid-units" id="playlists-grid"></div>
+</section>
+<section id="avisos" class="module">
+<div class="section-title">Criar Avisos <button class="btn btn-primary" onclick="openModal('modal-tts'); carregarUnidadesParaAviso();">+ Novo Aviso</button></div>
+<div class="table-container">
+<table>
+<thead><tr><th>Título</th><th>Texto do Aviso</th><th>Data</th><th>Unidades</th><th>Ações</th></tr></thead>
+<tbody id="tts-table"></tbody>
+</table>
+</div>
+<div class="section-title">Histórico de Envios</div>
+<div class="table-container">
+<table>
+<thead><tr><th>Data/Hora</th><th>Aviso</th><th>Destino</th><th>Status</th></tr></thead>
+<tbody>
+<tr><td>30/07/2026 - 14:05</td><td>Aviso Estacionamento</td><td>Toda a Rede</td><td><span style="color:var(--green)">Sucesso</span></td></tr>
+<tr><td>30/07/2026 - 09:15</td><td>Promoção Relâmpago</td><td>Iguatemi Campinas</td><td><span style="color:var(--green)">Sucesso</span></td></tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="historico" class="module">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+<div class="section-title" style="margin:0;">Logs de Atividade</div>
+<select style="width:200px;margin:0;">
+<option>Todas as Unidades</option>
+<option>Iguatemi Campinas</option>
+<option>Shop. Santo André</option>
+</select>
+</div>
+<div class="grid-2">
+<div class="sub-card">
+<h4>Histórico de Músicas</h4>
+<div class="timeline" id="music-history"></div>
+</div>
+<div class="sub-card">
+<h4>Histórico de Avisos</h4>
+<div class="timeline" id="alert-history"></div>
+</div>
+</div>
+</section>
+<section id="config" class="module">
+<div class="section-title">Configurações da Conta</div>
+<div class="sub-card" style="max-width:500px;">
+<label>Nome da Rede</label>
+<input type="text" value="Lojas Zeep S.A." readonly>
+<label style="margin-top:15px;">Plano Contratado</label>
+<input type="text" value="Enterprise" readonly>
+<label style="margin-top:15px;">Status da Assinatura</label>
+<input type="text" value="Ativo" readonly>
+<label style="margin-top:15px;">Versão do Sistema</label>
+<input type="text" value="v1.0.0" readonly>
+<p style="font-size:12px;color:var(--text3);margin-top:20px;">Suporte Técnico: <strong style="color:var(--cyan);">suporte@zeep.com.br</strong></p>
+</div>
+</section>
+</div>
+</main>
+<div id="modal-nova-unidade" class="modal">
+<div class="modal-content">
+<h3>+ Nova Unidade</h3>
+<p style="font-size:11px;color:var(--text3);margin-bottom:15px;">Ao adicionar uma unidade, a Zeep será notificada para ajustar seu contrato. Se o pagamento for via Stripe, a cobrança será atualizada automaticamente.</p>
+<label>Nome da Unidade</label>
+<input type="text" id="nu-nome" placeholder="Ex: Zeep Shopping Eldorado">
+<label>Cidade</label>
+<input type="text" id="nu-cidade" placeholder="Ex: São Paulo - SP">
+<label>Endereço</label>
+<input type="text" id="nu-endereco" placeholder="Ex: Av. Rebouças, 3970">
+<label>Responsável Local</label>
+<input type="text" id="nu-responsavel" placeholder="Ex: Maria Silva">
+<label>E-mail de Contato</label>
+<input type="email" id="nu-email" placeholder="Ex: maria@renner.com.br">
+<div style="display:flex;gap:10px;margin-top:20px;">
+<button class="btn btn-primary" onclick="adicionarUnidade()">Adicionar Unidade</button>
+<button class="btn btn-ghost" onclick="closeModal('modal-nova-unidade')">Cancelar</button>
+</div>
+</div>
+</div>
+<div id="modal-remover-unidade" class="modal">
+<div class="modal-content">
+<h3 style="color:var(--red);">Remover Unidade</h3>
+<p style="font-size:12px;color:var(--text2);margin-bottom:15px;">Tem certeza que deseja remover a unidade <strong id="ru-nome"></strong>?</p>
+<p style="font-size:11px;color:var(--text3);margin-bottom:15px;">A Zeep será notificada para ajustar seu contrato e faturamento. Se o pagamento for via Stripe, a cobrança será atualizada automaticamente.</p>
+<div style="display:flex;gap:10px;margin-top:20px;">
+<button class="btn btn-danger" onclick="confirmarRemoverUnidade()">Sim, Remover</button>
+<button class="btn btn-ghost" onclick="closeModal('modal-remover-unidade')">Cancelar</button>
+</div>
+</div>
+</div>
+<div id="modal-tts" class="modal">
+<div class="modal-content">
+<h3 style="color:var(--cyan);margin-bottom:20px;">Novo Aviso</h3>
+<label>Título do Aviso</label>
+<input type="text" id="aviso-titulo" placeholder="Ex: Horário de Almoço">
+<label>Texto para Voz</label>
+<textarea rows="4" id="aviso-texto" placeholder="Digite o texto que o player irá falar..."></textarea>
+<label>Destino</label>
+<select id="aviso-destino" onchange="toggleUnidades()"><option>Toda a Rede</option><option>Unidades Específicas</option></select>
+<div id="aviso-unidades" style="display:none; margin-bottom:16px;"></div>
+<label>Modo de Reprodução</label>
+<select id="aviso-modo">
+<option value="now">Tocar agora</option>
+<option value="scheduled">Agendar horário</option>
+</select>
+<input type="datetime-local" id="aviso-agendado" style="display:none;">
+<div style="display:flex;gap:10px;margin-top:20px;">
+<button class="btn btn-primary" id="btn-gerar-aviso">Gerar e Enviar</button>
+<button class="btn btn-ghost" onclick="closeModal('modal-tts')">Cancelar</button>
+</div>
+</div>
+</div>
+<script>
+var nomeClienteLogado = 'Sua Loja';
+var db = {
+units: [
+{ name: "Zeep Iguatemi Campinas", status: "Online", playlist: "Jangada @ Almoço", vol: "65%", last: "há 2 min", id: "ZEEP-001" },
+{ name: "Zeep Shopping Santo André", status: "Online", playlist: "Happy Hour Seleção", vol: "72%", last: "há 5 min", id: "ZEEP-002" },
+{ name: "Zeep Unidade XPTO", status: "Offline", playlist: "---", vol: "0%", last: "há 2 horas", id: "ZEEP-003" },
+{ name: "Zeep ParkShopping", status: "Online", playlist: "Jazz Evening", vol: "58%", last: "há 1 min", id: "ZEEP-004" },
+{ name: "Zeep Plaza Sul", status: "Online", playlist: "Jangada @ Almoço", vol: "70%", last: "há 4 min", id: "ZEEP-005" }
+],
+playlists: [
+{ name: "Jangada @ Almoço", tracks: 43, genre: "Lounge", units: 8 },
+{ name: "Happy Hour Seleção", tracks: 35, genre: "Pop/Deep", units: 3 },
+{ name: "Jazz Evening", tracks: 50, genre: "Jazz", units: 1 }
+],
+tts: [
+{ title: "Aviso Estacionamento", text: "Senhores clientes, o estacionamento fechará em 15 minutos.", date: "30/07/2026", units: "Rede" },
+{ title: "Promoção Relâmpago", text: "Atenção! 20% de desconto em toda linha de perfumaria agora!", date: "30/07/2026", units: "Campinas" }
+]
+};
+var unidadeRemoverId = null;
+function nav(id, el) {
+document.querySelectorAll('.module').forEach(function(m) { m.classList.remove('active'); });
+document.querySelectorAll('.nav-item').forEach(function(i) { i.classList.remove('active'); });
+document.getElementById(id).classList.add('active');
+el.classList.add('active');
+document.getElementById('page-title').innerText = el.innerText;
+document.getElementById('cliente-nome').innerText = '- ' + nomeClienteLogado;
+if (id === 'unidades') renderUnits();
+if (id === 'visao-geral') renderUnits();
+}
+function openModal(id) { document.getElementById(id).style.display = 'flex'; }
+function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+function updateMetrics() {
+var online = db.units.filter(function(u){ return u.status === 'Online'; }).length;
+var offline = db.units.filter(function(u){ return u.status === 'Offline'; }).length;
+document.getElementById('metric-online').innerText = online;
+document.getElementById('metric-offline').innerText = String(offline).padStart(2, '0');
+document.getElementById('badge-units').innerText = db.units.length + ' Unidades';
+}
+function renderUnits() {
+var grid = document.getElementById('units-grid');
+var table = document.getElementById('units-table');
+grid.innerHTML = '';
+table.innerHTML = '';
+db.units.forEach(function(u, i) {
+grid.innerHTML += '<div class="unit-card"><div class="unit-header"><h4>' + u.name + '</h4><span class="status-pill ' + (u.status === 'Online' ? 'pill-online' : 'pill-offline') + '">' + u.status + '</span></div><div class="unit-info">Tocando: <strong>' + u.playlist + '</strong></div><div class="unit-info">Volume: ' + u.vol + '</div><div class="unit-meta"><span>ID: ' + u.id + '</span><span>Visto: ' + u.last + '</span></div></div>';
+table.innerHTML += '<tr><td><strong>' + u.name + '</strong></td><td><span class="status-pill ' + (u.status === 'Online' ? 'pill-online' : 'pill-offline') + '">' + u.status + '</span></td><td>' + u.id + '</td><td>' + u.playlist + '</td><td>' + u.vol + '</td><td><div style="display:flex;gap:6px;"><button class="btn btn-ghost btn-sm">Reiniciar</button><button class="btn btn-danger btn-sm" onclick="abrirRemoverUnidade(' + i + ')">Remover</button></div></td></tr>';
+});
+updateMetrics();
+}
+function adicionarUnidade() {
+var nome = document.getElementById('nu-nome').value.trim();
+var cidade = document.getElementById('nu-cidade').value.trim();
+if (!nome) { alert("Digite o nome da unidade"); return; }
+var novoId = 'ZEEP-' + String(db.units.length + 1).padStart(3, '0');
+db.units.push({ name: nome + (cidade ? ' - ' + cidade : ''), status: "Offline", playlist: "---", vol: "0%", last: "Aguardando instalação", id: novoId });
+closeModal('modal-nova-unidade');
+document.getElementById('nu-nome').value = '';
+document.getElementById('nu-cidade').value = '';
+document.getElementById('nu-endereco').value = '';
+document.getElementById('nu-responsavel').value = '';
+document.getElementById('nu-email').value = '';
+renderUnits();
+alert("Unidade '" + nome + "' adicionada! A Zeep foi notificada para ajustar seu contrato. Se o pagamento for via Stripe, a cobrança será atualizada automaticamente.");
+}
+function abrirRemoverUnidade(i) {
+unidadeRemoverId = i;
+document.getElementById('ru-nome').innerText = db.units[i].name;
+openModal('modal-remover-unidade');
+}
+function confirmarRemoverUnidade() {
+if (unidadeRemoverId === null) return;
+var u = db.units[unidadeRemoverId];
+db.units.splice(unidadeRemoverId, 1);
+unidadeRemoverId = null;
+closeModal('modal-remover-unidade');
+renderUnits();
+alert("Unidade '" + u.name + "' removida! A Zeep foi notificada para ajustar seu contrato e faturamento.");
+}
+function toggleUnidades() {
+var v = document.getElementById('aviso-destino').value;
+document.getElementById('aviso-unidades').style.display = v === 'Unidades Específicas' ? 'block' : 'none';
+}
+function carregarUnidadesParaAviso() {
+var box = document.getElementById('aviso-unidades');
+function montar(unidades) {
+box.innerHTML = unidades.map(function(u) {
+return '<label style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;text-transform:none;letter-spacing:0;">' +
+'<input type="checkbox" value="' + u.id + '" style="width:auto;margin:0;"> ' + u.name +
+'</label>';
+}).join('');
+}
+fetch('/api/units')
+.then(function(r) { return r.json(); })
+.then(function(res) {
+if (res && res.units && res.units.length) montar(res.units);
+else montar(db.units);
+})
+.catch(function() { montar(db.units); });
+}
+function enviarAviso() {
+var titulo = document.getElementById('aviso-titulo').value;
+var texto = document.getElementById('aviso-texto').value;
+var destino = document.getElementById('aviso-destino').value;
+var modo = document.getElementById('aviso-modo').value;
+var agendado = document.getElementById('aviso-agendado').value;
+var unidadesSel = [];
+if (destino === 'Unidades Específicas') {
+document.querySelectorAll('#aviso-unidades input:checked').forEach(function(c) { unidadesSel.push(c.value); });
+if (!unidadesSel.length) return alert('Selecione ao menos uma unidade.');
+}
+if (!titulo || !texto) return alert('Preencha título e texto do aviso.');
+fetch('/api/avisos/gerar', {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({
+title: titulo,
+text: texto,
+target: destino || 'rede',
+target_units: unidadesSel,
+mode: modo,
+scheduled_at: modo === 'scheduled' ? new Date(agendado).toISOString() : null
+})
+})
+.then(function (r) { return r.json(); })
+.then(function (res) {
+if (!res.success) throw new Error(res.error);
+alert('Aviso "' + titulo + '" ' + (modo === 'now' ? 'tocando agora!' : 'agendado!'));
+if (typeof closeModal === 'function') closeModal('modal-tts');
+carregarHistoricoAvisos();
+})
+.catch(function (err) { alert('Erro: ' + err.message); });
+}
+
+function carregarHistoricoAvisos() {
+  fetch('/api/avisos')
+    .then(function(r) { return r.json(); })
+    .then(function(res) {
+      if (!res.success || !res.avisos) return;
+      var tTable = document.getElementById('tts-table');
+      if (!tTable) return;
+      tTable.innerHTML = res.avisos.map(function(a) {
+        return '<tr><td><strong>' + a.title + '</strong></td>' +
+          '<td style="font-size:11px;">' + a.text + '</td>' +
+          '<td>' + (a.created_at ? a.created_at.slice(0, 10) : '') + '</td>' +
+          '<td>' + (a.target_units && a.target_units.length ? a.target_units.join(', ') : 'Rede') + '</td>' +
+          '<td><button class="btn btn-ghost btn-sm">Enviar</button></td></tr>';
+      }).join('');
+    })
+    .catch(function(err) { console.warn('[Historico] Erro:', err.message); });
+}
+
+
+var btnAviso = document.getElementById('btn-gerar-aviso');
+if (btnAviso) {
+btnAviso.addEventListener('click', enviarAviso);
+
+}
+function init() {
+renderUnits();
+var pGrid = document.getElementById('playlists-grid');
+db.playlists.forEach(function(p) {
+pGrid.innerHTML += '<div class="unit-card"><h4>' + p.name + '</h4><p style="font-size:12px;color:var(--text3);margin-bottom:15px;">' + p.genre + ' • ' + p.tracks + ' faixas</p><div style="font-size:11px;margin-bottom:15px;">Ativa em <strong>' + p.units + ' unidades</strong></div><button class="btn btn-ghost btn-sm" style="width:100%">Sincronizar Rede</button></div>';
+});
+var tTable = document.getElementById('tts-table');
+db.tts.forEach(function(t) {
+tTable.innerHTML += '<tr><td><strong>' + t.title + '</strong></td><td style="font-size:11px;">' + t.text + '</td><td>' + t.date + '</td><td>' + t.units + '</td><td><button class="btn btn-ghost btn-sm">Enviar</button></td></tr>';
+});
+var mHist = document.getElementById('music-history');
+["Tocando: Adam Christopher - positions", "Tocando: Ben Howard - Only Love", "Tocando: Apollinare Rossi - California Dreamin'"].forEach(function(log) {
+mHist.innerHTML += '<div class="timeline-item"><div class="timeline-date">há 5 minutos</div>' + log + '</div>';
+});
+var aHist = document.getElementById('alert-history');
+["Aviso disparado: Estacionamento (Rede)", "Vinheta: Assinatura Zeep (Iguatemi)", "Aviso disparado: Promoção (Campinas)"].forEach(function(log) {
+aHist.innerHTML += '<div class="timeline-item"><div class="timeline-date">há 20 minutos</div>' + log + '</div>';
+});
+}
+init();
+</script>
+</body>
+</html>

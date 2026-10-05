@@ -1,0 +1,623 @@
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const path = require('path');
+const http = require('http');
+const { WebSocketServer } = require('ws');
+const { createClient } = require('@supabase/supabase-js');
+const app = express();
+const PORT = process.env.PORT || 3001;
+// ★ NOVO: confia no proxy do Railway para detectar https de verdade
+app.set('trust proxy', true);
+// ═══ CORS liberado para player, dashboards e qualquer origem ═══
+app.use(cors({
+  origin: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+app.use(express.json());
+// ═══════════ ROTAS DA API (todas antes do static e do listen) ═══════════
+const authRoutes = require('./src/routes/authRoutes');
+const playlistRoutes = require('./src/routes/playlistRoutes');
+const avisosRoutes = require('./src/routes/avisosRoutes');
+const r2Routes = require('./src/routes/r2Routes');
+const companyRoutes = require('./src/routes/companyRoutes');
+const unitRoutes = require('./src/routes/unitRoutes');
+const billingRoutes = require('./src/routes/billingRoutes');
+const ticketRoutes = require('./src/routes/ticketRoutes');
+const trackRoutes = require('./src/routes/trackRoutes');
+const jingleRoutes = require('./src/routes/jingleRoutes');
+const overviewRoutes = require('./src/routes/overviewRoutes'); // ★ caminho padronizado com src/
+app.use('/api/auth', authRoutes);
+app.use('/api/playlists', playlistRoutes);
+app.use('/api/avisos', avisosRoutes);
+app.use('/api/r2', r2Routes);
+app.use('/api/companies', companyRoutes);
+app.use('/api/units', unitRoutes);
+app.use('/api/billings', billingRoutes);
+app.use('/api/tickets', ticketRoutes);
+app.use('/api/tracks', trackRoutes);
+app.use('/api/jingles', jingleRoutes);
+app.use('/api/overview', overviewRoutes); // ★ registro ÚNICO
+// Health check
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+// ═══════════ ESTÁTICOS (dashboards) ═══════════
+app.use(express.static(path.join(__dirname, 'zeep-dashboard')));
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'zeep-dashboard', 'dashboard.html'));
+});
+app.use(express.static(path.join(__dirname, 'zeep-dashboard-enterprise')));
+app.get('/enterprise', (req, res) => {
+  res.sendFile(path.join(__dirname, 'zeep-dashboard-enterprise', 'dashboard-enterprise.html'));
+});
+// ═══════════ SUPABASE AUTH ═══════════
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  console.error('[AUTH] CRÍTICO: defina SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY nas Variables do Railway.');
+}
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+const bibliotecaRoutes = require('./src/routes/bibliotecaRoutes');
+app.use('/api/biblioteca', bibliotecaRoutes);
+function ehUuid(valor) {
+  return typeof valor === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(valor);
+}
+async function buscarDadosDoUsuario(userId) {
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .maybeSingle();
+  if (profileError) throw profileError;
+  if (!profile) return null;
+  const ADMIN_ROLES = ['ADMIN', 'OWNER', 'ZEEP_ADMIN', 'SUPER_ADMIN', 'MASTER'];
+  const isAdmin = ADMIN_ROLES.includes(profile ? profile.role : '');
+  if (!ehUuid(profile.company_id)) {
+    if (isAdmin) {
+      return {
+        user: { id: userId, role: profile.role || 'MANAGER', isAdmin: true },
+        company: null,
+        unit: null
+      };
+    }
+    console.error('[AUTH] Profile sem company_id válido:', profile.id, '->', profile.company_id);
+    return null;
+  }
+  const { data: company, error: companyError } = await supabase
+    .from('companies')
+    .select('*')
+    .eq('id', profile.company_id)
+    .maybeSingle();
+  if (companyError) throw companyError;
+  if (!company) return null;
+  let unit = null;
+  if (ehUuid(profile.unit_id)) {
+    const { data: unitData, error: unitError } = await supabase
+      .from('units')
+      .select('*')
+      .eq('id', profile.unit_id)
+      .maybeSingle();
+    if (unitError) throw unitError;
+    unit = unitData;
+  }
+  return {
+    user: { id: userId, role: profile.role || 'MANAGER', isAdmin: isAdmin },
+    company: {
+      id: company.id,
+      name: company.name,
+      plan: company.plan,
+      campaign: company.campaign || ''
+    },
+    unit: unit            // ← garante que o front recebe a unidade (com email)
+  };
+}
+// POST /api/auth/login
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, senha } = req.body || {};
+    if (!email || !senha) {
+      return res.status(400).json({ success: false, message: 'Informe e-mail e senha.' });
+    }
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password: senha });
+    if (error || !data.user) {
+      return res.status(401).json({ success: false, message: 'Credenciais inválidas.' });
+    }
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('company_id, unit_id, role')
+      .eq('id', data.user.id)
+      .maybeSingle();
+    const ADMIN_ROLES = ['ADMIN', 'OWNER', 'ZEEP_ADMIN', 'SUPER_ADMIN', 'MASTER'];
+    const isAdmin = ADMIN_ROLES.includes(profile ? profile.role : '');
+    if (!profile || (!isAdmin && !profile.company_id)) {
+      return res.status(403).json({ success: false, message: 'Usuário sem empresa vinculada.' });
+    }
+    res.json({
+      success: true,
+      token: data.session.access_token,
+      user: {
+        id: data.user.id,
+        email: data.user.email,
+        role: profile.role,
+        company_id: profile.company_id,
+        unit_id: profile.unit_id
+      }
+    });
+  } catch (err) {
+    console.error('[LOGIN] Erro:', err.message);
+    res.status(500).json({ success: false, message: 'Erro interno no login.' });
+  }
+});
+// GET /api/me
+app.get('/api/me', async (req, res) => {
+  try {
+    const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    if (!token) return res.status(401).json({ success: false, message: 'Token ausente.' });
+    const { data: userData, error: userError } = await supabase.auth.getUser(token);
+    if (userError || !userData.user) {
+      return res.status(401).json({ success: false, message: 'Sessão inválida.' });
+    }
+    const dados = await buscarDadosDoUsuario(userData.user.id);
+    if (!dados) {
+      return res.status(403).json({ success: false, message: 'Usuário sem empresa vinculada.' });
+    }
+    let schedules = [];
+    if (dados.unit && dados.unit.id) {
+      const { data: schedRows, error: schedErr } = await supabase
+        .from('schedules')
+        .select('playlist_id, start_time, end_time, active')
+        .eq('unit_id', dados.unit.id)
+        .eq('active', true);
+      if (!schedErr && schedRows && schedRows.length) {
+                const paraMinutos = (s) => {
+          const p = String(s).split(':').map(Number);
+          return (p[0] || 0) * 60 + (p[1] || 0);
+        };
+        schedules = schedRows
+          .filter(s => s.start_time && s.end_time)
+          .map(s => ({
+            nome: nomePorId[s.playlist_id] || 'Playlist',
+            inicio: paraMinutos(s.start_time),
+            fim: paraMinutos(s.end_time)
+          }))
+          .filter(s => !isNaN(s.inicio) && !isNaN(s.fim));
+      }
+    }
+    res.json({ success: true, ...dados, schedules });
+  } catch (err) {
+    console.error('[AUTH] Erro em /api/me:', err.message);
+    res.status(500).json({ success: false, message: 'Erro interno.' });
+  }
+});
+// GET /api/vinhetas
+app.get('/api/vinhetas', async (req, res) => {
+  try {
+    const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    if (!token) return res.status(401).json({ success: false, message: 'Token ausente.' });
+    const { data: userData, error: userError } = await supabase.auth.getUser(token);
+    if (userError || !userData.user) {
+      return res.status(401).json({ success: false, message: 'Sessão inválida.' });
+    }
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('company_id, unit_id, role')
+      .eq('id', userData.user.id)
+      .maybeSingle();
+    const ADMIN_ROLES = ['ADMIN', 'OWNER', 'ZEEP_ADMIN', 'SUPER_ADMIN', 'MASTER'];
+    const isAdmin = ADMIN_ROLES.includes(profile ? profile.role : '');
+    if (!profile || (!isAdmin && !profile.company_id)) {
+      return res.status(403).json({ success: false, message: 'Usuário sem empresa vinculada.' });
+    }
+    const companyId = (isAdmin && req.query.company_id && ehUuid(req.query.company_id))
+      ? req.query.company_id
+      : profile.company_id;
+    if (!companyId) {
+      return res.json({ success: true, vinhetas: [] });
+    }
+    const unitId = ehUuid(profile.unit_id) ? profile.unit_id : null;
+    const { data, error } = await supabase
+      .from('jingles')
+      .select('*')
+      .eq('company_id', companyId)
+      .eq('active', true);
+    if (error) throw error;
+    let lista = (data || []).filter(v => v.unit_id === unitId);
+    if (lista.length === 0) {
+      lista = (data || []).filter(v => v.unit_id === null);
+    }
+    res.json({
+      success: true,
+      vinhetas: lista.map(v => ({
+        id: v.id,                          // ★ ADICIONADO — necessário para o botão de apagar
+        nome: v.title,
+        caminho: v.file_url,
+        intervalo: v.interval_count || 5,
+      })),
+    });
+  } catch (err) {
+    console.error('[VINHETAS] Erro:', err.message);
+    res.status(500).json({ success: false, message: 'Erro interno ao carregar vinhetas.' });
+  }
+});
+// ★ NOVO: POST /api/vinhetas — cria/associa vinheta da marca a um cliente
+app.post('/api/vinhetas', async (req, res) => {
+  try {
+    const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    if (!token) return res.status(401).json({ success: false, message: 'Token ausente.' });
+    const { data: userData, error: userError } = await supabase.auth.getUser(token);
+    if (userError || !userData.user) {
+      return res.status(401).json({ success: false, message: 'Sessão inválida.' });
+    }
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('company_id, unit_id, role')
+      .eq('id', userData.user.id)
+      .maybeSingle();
+    const ADMIN_ROLES = ['ADMIN', 'OWNER', 'ZEEP_ADMIN', 'SUPER_ADMIN', 'MASTER'];
+    const isAdmin = ADMIN_ROLES.includes(profile ? profile.role : '');
+    if (!profile || (!isAdmin && !profile.company_id)) {
+      return res.status(403).json({ success: false, message: 'Usuário sem empresa vinculada.' });
+    }
+    const { title, file_url, interval_count, company_id, unit_id } = req.body || {};
+    if (!title || !file_url) {
+      return res.status(400).json({ success: false, message: 'Informe title e file_url.' });
+    }
+    // Admin pode associar a qualquer cliente; MANAGER fica preso na própria empresa
+    const companyId = (isAdmin && company_id && ehUuid(company_id)) ? company_id : profile.company_id;
+    if (!companyId) {
+      return res.status(400).json({ success: false, message: 'Informe o cliente (company_id) para associar a vinheta.' });
+    }
+    const unitId = (unit_id && ehUuid(unit_id)) ? unit_id : (ehUuid(profile.unit_id) ? profile.unit_id : null);
+    const { data, error } = await supabase
+      .from('jingles')
+      .insert({
+        title,
+        file_url,
+        interval_count: interval_count !== undefined ? Number(interval_count) : 5,
+        company_id: companyId,
+        unit_id: unitId,
+        active: true
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    res.status(201).json({ success: true, vinheta: data });
+  } catch (err) {
+    console.error('[VINHETAS] Erro ao criar:', err.message);
+    res.status(500).json({ success: false, message: 'Erro interno ao criar vinheta.' });
+  }
+});
+// ★ NOVO: DELETE /api/vinhetas/:id — remove vinheta (só da própria empresa, salvo admin)
+app.delete('/api/vinhetas/:id', async (req, res) => {
+  try {
+    const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    if (!token) return res.status(401).json({ success: false, message: 'Token ausente.' });
+    const { data: userData, error: userError } = await supabase.auth.getUser(token);
+    if (userError || !userData.user) {
+      return res.status(401).json({ success: false, message: 'Sessão inválida.' });
+    }
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('company_id, role')
+      .eq('id', userData.user.id)
+      .maybeSingle();
+    const ADMIN_ROLES = ['ADMIN', 'OWNER', 'ZEEP_ADMIN', 'SUPER_ADMIN', 'MASTER'];
+    const isAdmin = ADMIN_ROLES.includes(profile ? profile.role : '');
+    const { id } = req.params;
+    if (!ehUuid(id)) return res.status(400).json({ success: false, message: 'ID inválido.' });
+    let query = supabase.from('jingles').delete().eq('id', id);
+    if (!isAdmin) query = query.eq('company_id', profile.company_id);
+    const { data, error } = await query.select().maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ success: false, message: 'Vinheta não encontrada.' });
+    res.json({ success: true, message: 'Vinheta excluída.' });
+  } catch (err) {
+    console.error('[VINHETAS] Erro ao excluir:', err.message);
+    res.status(500).json({ success: false, message: 'Erro interno ao excluir vinheta.' });
+  }
+});
+// ★ NOVO: PATCH /api/vinhetas/:id — atualiza o intervalo da vinheta
+app.patch('/api/vinhetas/:id', async (req, res) => {
+  try {
+    const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    if (!token) return res.status(401).json({ success: false, message: 'Token ausente.' });
+    const { data: userData, error: userError } = await supabase.auth.getUser(token);
+    if (userError || !userData.user) {
+      return res.status(401).json({ success: false, message: 'Sessão inválida.' });
+    }
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('company_id, role')
+      .eq('id', userData.user.id)
+      .maybeSingle();
+    const ADMIN_ROLES = ['ADMIN', 'OWNER', 'ZEEP_ADMIN', 'SUPER_ADMIN', 'MASTER'];
+    const isAdmin = ADMIN_ROLES.includes(profile ? profile.role : '');
+    const { id } = req.params;
+    if (!ehUuid(id)) return res.status(400).json({ success: false, message: 'ID inválido.' });
+    const { interval_count } = req.body || {};
+    if (interval_count === undefined || interval_count === null) {
+      return res.status(400).json({ success: false, message: 'Informe o novo interval_count.' });
+    }
+    let query = supabase.from('jingles').update({ interval_count: Number(interval_count) }).eq('id', id);
+    if (!isAdmin) query = query.eq('company_id', profile.company_id);
+    const { data, error } = await query.select().maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ success: false, message: 'Vinheta não encontrada.' });
+    res.json({ success: true, vinheta: data });
+  } catch (err) {
+    console.error('[VINHETAS] Erro ao atualizar:', err.message);
+    res.status(500).json({ success: false, message: 'Erro interno ao atualizar vinheta.' });
+  }
+});
+// ★ NOVO: remover vinheta pelo file_key (usado pela tela Vinhetas da Marca)
+app.post('/api/vinhetas/remover-por-chave', async (req, res) => {
+  try {
+    const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    if (!token) return res.status(401).json({ success: false, message: 'Token ausente.' });
+    const { data: userData, error: userError } = await supabase.auth.getUser(token);
+    if (userError || !userData.user) return res.status(401).json({ success: false, message: 'Sessão inválida.' });
+    const { file_key } = req.body || {};
+    if (!file_key) return res.status(400).json({ success: false, message: 'Informe o file_key.' });
+    const { data: achados, error } = await supabase
+      .from('jingles')
+      .select('id')
+      .eq('file_key', file_key);
+    if (error) throw error;
+    if (!achados || !achados.length) return res.status(404).json({ success: false, message: 'Vinheta não encontrada.' });
+    for (const reg of achados) {
+      await supabase.from('jingles').delete().eq('id', reg.id);
+    }
+    res.json({ success: true, message: 'Vinheta(s) excluída(s).' });
+  } catch (err) {
+    console.error('[VINHETAS] Erro ao excluir por chave:', err.message);
+    res.status(500).json({ success: false, message: 'Erro interno ao excluir vinheta.' });
+  }
+});
+// POST /api/playlists/copiar — copia as músicas de uma playlist para outra (clientes diferentes)
+app.post('/api/playlists/copiar', async (req, res) => {
+  try {
+    const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    if (!token) return res.status(401).json({ success: false, message: 'Token ausente.' });
+    const { data: userData, error: userError } = await supabase.auth.getUser(token);
+    if (userError || !userData.user) {
+      return res.status(401).json({ success: false, message: 'Sessão inválida.' });
+    }
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('company_id, role')
+      .eq('id', userData.user.id)
+      .maybeSingle();
+    const ADMIN_ROLES = ['ADMIN', 'OWNER', 'ZEEP_ADMIN', 'SUPER_ADMIN', 'MASTER'];
+    const isAdmin = ADMIN_ROLES.includes(profile ? profile.role : '');
+    if (!profile || (!isAdmin && !profile.company_id)) {
+      return res.status(403).json({ success: false, message: 'Usuário sem empresa vinculada.' });
+    }
+    const { playlist_origem_id, playlist_destino_id } = req.body || {};
+    if (!ehUuid(playlist_origem_id) || !ehUuid(playlist_destino_id)) {
+      return res.status(400).json({ success: false, message: 'Informe playlist_origem_id e playlist_destino_id (UUIDs válidos).' });
+    }
+    // Valida as duas playlists (origem e destino existem)
+    const { data: origem, error: errOrigem } = await supabase
+      .from('playlists').select('id, company_id').eq('id', playlist_origem_id).maybeSingle();
+    if (errOrigem) throw errOrigem;
+    if (!origem) return res.status(404).json({ success: false, message: 'Playlist de origem não encontrada.' });
+    const { data: destino, error: errDestino } = await supabase
+      .from('playlists').select('id, company_id').eq('id', playlist_destino_id).maybeSingle();
+    if (errDestino) throw errDestino;
+    if (!destino) return res.status(404).json({ success: false, message: 'Playlist de destino não encontrada.' });
+    // Segurança: MANAGER só copia para playlists da própria empresa
+    if (!isAdmin && destino.company_id !== profile.company_id) {
+      return res.status(403).json({ success: false, message: 'Você não pode copiar para essa playlist.' });
+    }
+    // Busca as músicas da origem (com ordem)
+    const { data: vincs, error: errVincs } = await supabase
+      .from('playlist_tracks')
+      .select('track_id, position')
+      .eq('playlist_id', playlist_origem_id)
+      .order('position', { ascending: true });
+    if (errVincs) throw errVincs;
+    if (!vincs || !vincs.length) {
+      return res.json({ success: true, copiadas: 0, message: 'A playlist de origem não tem músicas para copiar.' });
+    }
+    // Busca as músicas que JÁ existem no destino (para não duplicar — constraint de unicidade)
+    const { data: jaExistem, error: errJa } = await supabase
+      .from('playlist_tracks')
+      .select('track_id')
+      .eq('playlist_id', playlist_destino_id);
+    if (errJa) throw errJa;
+    const idsJaExistentes = new Set((jaExistem || []).map(t => t.track_id));
+    // Filtra: só copia as que ainda NÃO estão no destino
+    const novas = vincs.filter(v => !idsJaExistentes.has(v.track_id));
+    if (!novas.length) {
+      return res.json({ success: true, copiadas: 0, message: 'Todas as músicas da origem já estão na playlist de destino.' });
+    }
+    // Posição inicial no destino = fim da lista atual (append, não substitui)
+    const { data: ultimos, error: errUlt } = await supabase
+      .from('playlist_tracks')
+      .select('position')
+      .eq('playlist_id', playlist_destino_id)
+      .order('position', { ascending: false })
+      .limit(1);
+    if (errUlt) throw errUlt;
+    let pos = (ultimos && ultimos[0] && ultimos[0].position != null) ? ultimos[0].position + 1 : 0;
+    // Monta as linhas: mesmo track_id, novo playlist_id, mantendo a ordem
+    const linhas = novas.map(function (v, i) {
+      return { playlist_id: playlist_destino_id, track_id: v.track_id, position: pos + i };
+    });
+    const { error: errIns } = await supabase.from('playlist_tracks').insert(linhas);
+    if (errIns) throw errIns;
+    res.json({ success: true, copiadas: linhas.length, message: linhas.length + ' música(s) copiada(s) para a playlist de destino.' });
+  } catch (err) {
+    console.error('[PLAYLISTS] Erro ao copiar faixas:', err.message);
+    res.status(500).json({ success: false, message: 'Erro interno ao copiar faixas.' });
+  }
+});
+// POST /api/schedules — salva/atualiza horário da playlist na unidade
+app.post('/api/schedules', async (req, res) => {
+  try {
+    const token = (req.headers.authorization || '').replace('Bearer ', '');
+    const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+    if (authErr || !user) return res.status(401).json({ success: false, message: 'Não autenticado.' });
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('company_id, unit_id, role')
+      .eq('id', user.id)
+      .maybeSingle();
+    const ADMIN_ROLES = ['ADMIN', 'OWNER', 'ZEEP_ADMIN', 'SUPER_ADMIN', 'MASTER'];
+    const isAdmin = ADMIN_ROLES.includes(profile ? profile.role : '');
+    if (!profile || (!isAdmin && !profile.company_id)) {
+      return res.status(403).json({ success: false, message: 'Sem permissão.' });
+    }
+    const { unit_id, playlist_id, start_time, end_time, active } = req.body || {};
+    if (!ehUuid(unit_id) || !ehUuid(playlist_id) || !start_time || !end_time) {
+      return res.status(400).json({ success: false, message: 'Envie unit_id, playlist_id, start_time e end_time.' });
+    }
+    if (!isAdmin && profile.unit_id !== unit_id) {
+      return res.status(403).json({ success: false, message: 'Você só pode editar sua própria unidade.' });
+    }
+    // company_id vem da unidade (fonte da verdade — evita depender do perfil)
+    const { data: unidade } = await supabase
+      .from('units').select('company_id').eq('id', unit_id).maybeSingle();
+    const companyId = unidade ? unidade.company_id : profile.company_id;
+    if (!companyId) return res.status(400).json({ success: false, message: 'Unidade sem empresa vinculada.' });
+    // upsert: já existe horário para essa playlist+unidade? atualiza; senão cria
+    const { data: existente } = await supabase
+      .from('schedules').select('id')
+      .eq('unit_id', unit_id).eq('playlist_id', playlist_id)
+      .maybeSingle();
+    if (existente) {
+      await supabase
+        .from('schedules')
+        .update({ start_time, end_time, active: active !== false, updated_at: new Date().toISOString() })
+        .eq('id', existente.id);
+    } else {
+      await supabase
+        .from('schedules')
+        .insert({ company_id: companyId, unit_id: unit_id, playlist_id: playlist_id,
+                  start_time, end_time, active: active !== false });
+    }
+    res.json({ success: true, message: 'Horário salvo.' });
+  } catch (err) {
+    console.error('[SCHEDULES] Erro ao salvar:', err.message);
+    res.status(500).json({ success: false, message: 'Erro interno ao salvar horário.' });
+  }
+});
+// DELETE /api/schedules — remove o horário da playlist da unidade (só da própria unidade, salvo admin)
+app.delete('/api/schedules', async (req, res) => {
+  try {
+    const token = (req.headers.authorization || '').replace('Bearer ', '');
+    const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+    if (authErr || !user) return res.status(401).json({ success: false, message: 'Não autenticado.' });
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('company_id, unit_id, role')
+      .eq('id', user.id)
+      .maybeSingle();
+    const ADMIN_ROLES = ['ADMIN', 'OWNER', 'ZEEP_ADMIN', 'SUPER_ADMIN', 'MASTER'];
+    const isAdmin = ADMIN_ROLES.includes(profile ? profile.role : '');
+    if (!profile || (!isAdmin && !profile.company_id)) {
+      return res.status(403).json({ success: false, message: 'Sem permissão.' });
+    }
+
+    const { unit_id, playlist_id } = req.query || {};
+    if (!ehUuid(unit_id) || !ehUuid(playlist_id)) {
+      return res.status(400).json({ success: false, message: 'Envie unit_id e playlist_id.' });
+    }
+    if (!isAdmin && profile.unit_id !== unit_id) {
+      return res.status(403).json({ success: false, message: 'Você só pode editar sua própria unidade.' });
+    }
+    await supabase.from('schedules').delete().eq('unit_id', unit_id).eq('playlist_id', playlist_id);
+    res.json({ success: true, message: 'Horário removido.' });
+  } catch (err) {
+    console.error('[SCHEDULES] Erro ao remover:', err.message);
+    res.status(500).json({ success: false, message: 'Erro interno ao remover horário.' });
+  }
+});
+// GET /api/companies — lista as empresas (clientes) do Supabase (via service role)
+app.get('/api/companies', async (req, res) => {
+  try {
+    const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    if (!token) return res.status(401).json({ success: false, message: 'Token ausente.' });
+    const { data: userData, error: userError } = await supabase.auth.getUser(token);
+    if (userError || !userData.user) {
+      return res.status(401).json({ success: false, message: 'Sessão inválida.' });
+    }
+    const { data: companies, error } = await supabase
+      .from('companies')
+      .select('id, name')
+      .order('name', { ascending: true });
+    if (error) throw error;
+    res.json({ success: true, companies: companies || [] });
+  } catch (err) {
+    console.error('[COMPANIES] Erro ao listar:', err.message);
+    res.status(500).json({ success: false, message: 'Erro interno ao listar empresas.' });
+  }
+});
+// GET /api/versao
+app.get('/api/versao', (req, res) => {
+  res.json({
+    build: 'v3',
+    temMe: true,
+    jwtSecretDefinido: !!process.env.JWT_SECRET,
+    tamanhoDoSecret: (process.env.JWT_SECRET || '').length
+  });
+});
+// ═══════════ 404 LIMPO PARA /api (no FINAL — depois de TODAS as rotas) ═══════════
+app.use('/api', (req, res) => {
+  res.status(404).json({ success: false, message: 'Rota não encontrada.' });
+});
+// ═══════════ ERROR HANDLER GLOBAL (nunca devolve stack trace ao cliente) ═══════════
+app.use((err, req, res, next) => {
+  console.error('[SERVER] Erro não tratado:', err.message);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ success: false, message: 'Erro interno no servidor.' });
+});
+// ═══════════ INICIALIZAÇÃO + WEBSOCKET ═══════════
+console.log('[ZEEP] Iniciando servidor...');
+console.log('[ZEEP] SUPABASE_URL presente?', !!process.env.SUPABASE_URL);
+console.log('[ZEEP] SUPABASE_SERVICE_ROLE_KEY presente?', !!process.env.SUPABASE_SERVICE_ROLE_KEY);
+const server = app.listen(PORT, () => {
+  console.log('[ZEEP] Servidor rodando e ouvindo na porta ' + PORT);
+});
+const wss = new WebSocketServer({ server });
+wss.on('connection', async (socket, req) => {
+  try {
+    const url = new URL(req.url, 'http://localhost');
+    const token = url.searchParams.get('token') || '';
+    if (!token) { socket.close(4001, 'Token ausente'); return; }
+    const { data: userData, error: userError } = await supabase.auth.getUser(token);
+    if (userError || !userData.user) { socket.close(4001, 'Sessão inválida'); return; }
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('company_id, unit_id, role')
+      .eq('id', userData.user.id)
+      .maybeSingle();
+    if (!profile) { socket.close(4001, 'Sem perfil'); return; }
+    console.log('[WS] Player conectado:', userData.user.email, '· role:', profile.role);
+    socket.send(JSON.stringify({
+      event: 'connected',
+      data: { billingStatus: 'active' }
+    }));
+    socket.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (msg.event === 'ping') {
+          socket.send(JSON.stringify({ event: 'pong' }));
+        } else if (msg.event === 'status:update') {
+          console.log('[WS] status:update:', JSON.stringify(msg.data || {}));
+        }
+      } catch (e) {}
+    });
+    socket.on('close', () => {
+      console.log('[WS] Player desconectado:', userData.user.email);
+    });
+  } catch (err) {
+    console.error('[WS] Erro na conexão:', err.message);
+    socket.close(4001, 'Erro interno');
+  }
+});
